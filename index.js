@@ -1,22 +1,27 @@
-// 引用linebot SDK
-var linebot = require('linebot');
-//引用request
-var request = require('request');
-
-// 用於辨識Line Channel的資訊
-var bot = linebot({
-  channelId: '1657027135',
-  channelSecret: 'd5fdfd126ee88cb4b75fa59e6b5d91bb',
-  channelAccessToken: '0qKgZBy1iaO/3HeYxjSVdNIvzfzkzTPHTBcUn7uRAvWZa4yA1XSRMRzulKb09C0ZPqBQYrgGM05vUK57ToAv0pN4O6UVms0IF0N3t7cIjbgjAPcobNxHSJIWNMKliq73Iwij8XINJrfc+cJ0V6tJ6wdB04t89/1O/w1cDnyilFU='
-});
-
 //web server與line notify驗證的套件
 'use strict';
+//引用request
+var request = require('request');
+//引用@line/bot-sdk
+const line = require('@line/bot-sdk');
+//引用express
 const express = require('express');
+
+// create LINE SDK config from env variables
+const config = {
+  //channelId: process.env.CHANNEL_ID,
+  channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.CHANNEL_SECRET,
+};
+
+// create LINE SDK client
+const client = new line.Client(config);
+
 const line_notify = require('./line-notify');
 const path = require('path');
 const session = require('express-session'); //使用express-session作為middleware
 const moment= require('moment'); //處理時間運算
+const { exportDefaultSpecifier } = require('babel-types');
 
 //頁面渲染引擎設定、靜態檔案存取設定、session參數、line notify參數
 //設定session參數
@@ -87,58 +92,58 @@ app.get('/auth/notify/logout', (req, res) => { //登出帳號清除session
   res.redirect('/');
 });
 
-// 當有人傳送訊息給Bot時
-bot.on('message', function (event) {
-    // event.message.text是使用者傳給bot的訊息
-    // 準備要回傳的內容
-    // var replyMsg ='reply message 1';
+// register a webhook handler with middleware
+// about the middleware, please refer to doc
+app.post('/', line.middleware(config), (req, res) => {
+  Promise
+    .all(req.body.events.map(handleEvent))
+    .then((result) => res.json(result))
+    .catch((err) => {
+      console.error(err);
+      res.status(500).end();
+    });
+  
+});
 
-    //貼心叮嚀功能
-    if(event.message.text == "貼心叮嚀"){
-        //Imgur資訊勿刪
-        //CLIENT_ID: f4b7e817c8c011a
-        //CLIENT_SECRET: 8b759b380c34ad683a202e9851cfb1543bc8124b
-        //Access Token: 6a432a35538c9721406cbd5de6ccf86997ebc395
-        //https://imgur.com/gallery/xmJXFMT
+// event handler
+function handleEvent(event) {
+  //貼心叮嚀功能
+  if(event.type === 'message' && event.message.text == "貼心叮嚀"){
+    //連接imgur api
+    var options = { method: 'GET',
+        url: 'https://api.imgur.com/3/album/xmJXFMT/images',
+        headers:
+        { 'access-token': `${process.env.IMGUR_ACCESS_TOKEN}`,
+        'cache-control': 'no-cache',
+        authorization: `Client-ID ${process.env.IMGUR_CLIENT_ID}` } };
         
-        //連接imgur api
-        var options = { method: 'GET',
-            url: 'https://api.imgur.com/3/album/xmJXFMT/images',
-            headers:
-            { 'access-token': '6a432a35538c9721406cbd5de6ccf86997ebc395',
-            'cache-control': 'no-cache',
-            authorization: 'Client-ID f4b7e817c8c011a' } };
-            
-        //取得imgur相簿的所有內容，隨機回覆圖片
-        request(options, function (error, response, body) {
-            if (error) throw new Error(error);
-            //取得相簿裡隨機位置的圖片link
-            var pic_url= 'https://imgur.com/' + JSON.parse(body).data[Math.floor(Math.random()*JSON.parse(body).data.length)].id + '.jpg';
-            // 透過event.reply(要回傳的訊息)方法將訊息回傳給使用者
-            event.reply({
-                type: 'image',
-                originalContentUrl: pic_url,
-                previewImageUrl: pic_url
-                });
-        });
-    } 
-});      
-       
-//         event.reply(
-//             {
-//                 type: 'image',
-//                 originalContentUrl: pic_url,
-//                 previewImageUrl: pic_url
-//             }
-//         ).then(function (data) {
-//             // 當訊息成功回傳後的處理
-//         }).catch(function (error) {
-//             // 當訊息回傳失敗後的處理
-//         });
-    
+    //取得imgur相簿的所有內容，隨機回覆圖片
+    request(options, function (error, response, body) {
+        if (error) throw new Error(error);
+        //取得相簿裡隨機位置的圖片link
+        var pic_url= 'https://imgur.com/' + JSON.parse(body).data[Math.floor(Math.random()*JSON.parse(body).data.length)].id + '.jpg';
+        // 透過client.replyMessage(event.replyToken, 要回傳的訊息)方法將訊息回傳給使用者
+        const img_echo = { 
+          type: 'image', 
+          originalContentUrl: pic_url,
+          previewImageUrl: pic_url 
+        };
+        // use reply API
+        return client.replyMessage(event.replyToken, img_echo);
+    });
+  }
+  else{
+    // create a echoing text message
+    const echo = { type: 'text', text: event.message.text };
 
-//啟動web server(含web api)
-// Bot所監聽的webhook路徑與port
-bot.listen('/linewebhook', 3000, function () {
-    console.log('[BOT已準備就緒]');
+    // use reply API
+    return client.replyMessage(event.replyToken, echo);
+  }
+  
+}
+
+// Bot 所監聽的 webhook 路徑與 port，heroku 會動態存取 port 所以不能用固定的 port，沒有的話用預設的 port 3000
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`listening on ${port}`);
 });
