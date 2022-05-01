@@ -1,7 +1,7 @@
 //web server與line notify驗證的套件
 'use strict';
 //引用request
-var request = require('request');
+const request = require('request');
 //引用@line/bot-sdk
 const line = require('@line/bot-sdk');
 //引用express
@@ -14,6 +14,15 @@ const config = {
   channelSecret: process.env.CHANNEL_SECRET,
 };
 
+//連接環境變量指定的數據庫
+const { Pool } = require('pg');
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false
+    }
+});
+
 // create LINE SDK client
 const client = new line.Client(config);
 
@@ -22,6 +31,7 @@ const path = require('path');
 const session = require('express-session'); //使用express-session作為middleware
 const moment= require('moment'); //處理時間運算
 const { exportDefaultSpecifier } = require('babel-types');
+const { initParams } = require('request');
 
 //頁面渲染引擎設定、靜態檔案存取設定、session參數、line notify參數
 //設定session參數
@@ -58,7 +68,6 @@ app.get('/', (req, res) => {
     res.render('login');  //自訂尚未登入頁面，沒有錯誤訊息
   }
 });
-
 //LINE Notify相關的API
 app.get('/auth/notify', lineNotify.authDirect()); //產生跳轉到LINE Notify的授權網址
 app.get('/auth/notify/cb', lineNotify.authcb( //Notify API端點接收授權訊息
@@ -104,24 +113,33 @@ app.post('/', line.middleware(config), (req, res) => {
     });
   
 });
-
 // event handler
 function handleEvent(event) {
-  //貼心叮嚀功能
-  if(event.type === 'message' && event.message.text == "貼心叮嚀"){
-    //連接imgur api
-    var options = { method: 'GET',
-        url: 'https://api.imgur.com/3/album/xmJXFMT/images',
-        headers:
-        { 'access-token': `${process.env.IMGUR_ACCESS_TOKEN}`,
-        'cache-control': 'no-cache',
-        authorization: `Client-ID ${process.env.IMGUR_CLIENT_ID}` } };
-        
-    //取得imgur相簿的所有內容，隨機回覆圖片
-    request(options, function (error, response, body) {
-        if (error) throw new Error(error);
+  if(event.type === 'postback'){
+    return handlePostEvent(event);
+  }
+  else if(event.type === 'message'){
+    if(event.message.text == '瞭解眼部疾病'){
+      const eye_function2 = require('./eye_menu/menu_2');
+      const ef2 = new eye_function2();
+      return client.replyMessage(event.replyToken, ef2.Ask_Msg());
+    }
+    else if(event.message.text == '貼心叮嚀'){
+      //連接imgur api
+      let options = { method: 'GET',
+      url: 'https://api.imgur.com/3/album/xmJXFMT/images',
+      headers:
+      { 'access-token': `${process.env.IMGUR_ACCESS_TOKEN}`,
+      'cache-control': 'no-cache',
+      authorization: `Client-ID ${process.env.IMGUR_CLIENT_ID}` } };
+      //取得imgur相簿的所有內容，隨機回覆圖片
+      request(options, function (error, response, body) {
+        if (error) {
+          let img_error = { type: 'text', text: 'img_error' };
+          return client.replyMessage(event.replyToken, img_error);
+        }
         //取得相簿裡隨機位置的圖片link
-        var pic_url= 'https://imgur.com/' + JSON.parse(body).data[Math.floor(Math.random()*JSON.parse(body).data.length)].id + '.jpg';
+        let pic_url= 'https://imgur.com/' + JSON.parse(body).data[Math.floor(Math.random()*JSON.parse(body).data.length)].id + '.jpg';
         // 透過client.replyMessage(event.replyToken, 要回傳的訊息)方法將訊息回傳給使用者
         const img_echo = { 
           type: 'image', 
@@ -130,18 +148,77 @@ function handleEvent(event) {
         };
         // use reply API
         return client.replyMessage(event.replyToken, img_echo);
+      });
+    }
+    else{
+      // create a echoing text message
+      const echo = { type: 'text', text: `${event.message.text}` };
+      return client.replyMessage(event.replyToken, echo);
+    }
+  }
+  else{
+    const qqq = { type: 'text', text: '456' };
+    return client.replyMessage(event.replyToken, qqq);
+  }
+};
+function handlePostEvent(event){
+  //引用querystring
+  let { parse } = require('querystring');
+  //抓postback的data值
+  let data = event.postback.data;
+  //拆解data值
+  let _data = parse(data);
+  if(_data.menu == 2){
+    // let menu2_db = require('./eye_menu/menu_data');
+    // let m2db = new menu2_db();
+    // let db_result = m2db.db_disease_return(_data.type, _data.number);
+    // 以下連結資料庫資料，不知為啥跳到其他.js不能讀取，但至少在這裡可以
+    pool.connect(function(err, pp, done){
+      if(err){
+        let a = { type: 'text', text: "connect error" };
+        return client.replyMessage(event.replyToken, a);
+      }
+      // let disease_number_count = db_disease_num(pp, _data.type);
+      let sql = `SELECT description FROM disease WHERE type = ${_data.type} AND number = 2`;
+      pp.query(sql, function(err, result){
+        if(err){
+          let b = { type: 'text', text: "query error" };
+          return client.replyMessage(event.replyToken, b);
+        }
+        const results = { 'results': (result) ? result.rows : null};
+        let ss = JSON.parse(JSON.stringify(results));
+        //將資料依照%D切割開來，不知道為什麼ss印出\n會直接印出來
+        let ppds = ss.results[0].description.split("%D");
+        let str = "";
+        //結尾不換行w
+        for (let i in ppds){
+          if(i == ppds.length-1){
+            str += ppds[i];
+          }else{
+            str += ppds[i] + '\n';
+          }   
+        }
+        let postback_echo = { type: 'text', text: str };
+        return client.replyMessage(event.replyToken, postback_echo);
+      });
     });
   }
   else{
-    // create a echoing text message
-    const echo = { type: 'text', text: event.message.text };
-
-    // use reply API
-    return client.replyMessage(event.replyToken, echo);
+    let postback_error = { type: 'text', text: 'error' };
+    return client.replyMessage(event.replyToken, postback_error);
   }
-  
-}
-
+};
+// function db_disease_num(pp, type){
+//   let sql = `SELECT count(number) AS count FROM disease WHERE type = ${type}`;
+//   pp.query(sql, function(err, result){
+//     if(err){
+//       return 1;
+//     }
+//     const results = { 'results': (result) ? result.rows : null};
+//     let ss = JSON.parse(JSON.stringify(results));
+//     return ss.results[0].count;
+//   });
+// }
 // Bot 所監聽的 webhook 路徑與 port，heroku 會動態存取 port 所以不能用固定的 port，沒有的話用預設的 port 3000
 const port = process.env.PORT || 3000;
 app.listen(port, () => {

@@ -14,7 +14,9 @@
     "express-session": "^1.16.1",
     "linebot": "^1.6.1",
     "moment": "^2.24.0",
+    "pg": "^8.7.3",
     "pug": "^2.0.3",
+    "querystring": "^0.2.1",
     "request": "^2.88.2"
   },
   "devDependencies": {
